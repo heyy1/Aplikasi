@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
 import { getDatabase, ref, set, onValue, push, update, remove } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js';
 import { User, UserRole, Product, Transaction, TransactionType, Category, ProductType } from './types';
@@ -17,7 +17,7 @@ const firebaseConfig = {
     measurementId: "G-E7J61RF3GX"
 };
 
-// Inisialisasi satu kali di luar komponen
+// Inisialisasi Firebase
 const app = initializeApp(firebaseConfig);
 const db = getDatabase(app);
 
@@ -43,71 +43,57 @@ const App: React.FC = () => {
   const [printQuantities, setPrintQuantities] = useState<Record<string, number>>({});
   const [isOnline, setIsOnline] = useState(true);
 
-  // Listener Real-time
+  // Sync Data Real-time
   useEffect(() => {
     if (!db) return;
 
-    // Listen Kategori
+    // Load Categories
     const unsubCats = onValue(ref(db, 'categories'), (snap) => {
       const data = snap.val();
-      setCategories(data ? Object.values(data) as Category[] : []);
+      const list = data ? Object.values(data) as Category[] : [];
+      setCategories(list);
       setIsOnline(true);
     }, (err) => {
-      console.error("Firebase Read Error:", err);
+      console.error("Firebase Auth/Permission Error:", err);
       setIsOnline(false);
     });
 
-    // Listen Jenis
+    // Load Types
     const unsubTypes = onValue(ref(db, 'types'), (snap) => {
       const data = snap.val();
       setTypes(data ? Object.values(data) as ProductType[] : []);
     });
 
-    // Listen Produk
+    // Load Products
     const unsubProds = onValue(ref(db, 'products'), (snap) => {
       const data = snap.val();
       setProducts(data ? Object.values(data) as Product[] : []);
     });
 
-    // Listen Transaksi
+    // Load Transactions
     const unsubTrans = onValue(ref(db, 'transactions'), (snap) => {
       const data = snap.val();
       const list = data ? Object.values(data) as Transaction[] : [];
       setTransactions(list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()));
     });
 
-    return () => {
-      unsubCats();
-      unsubTypes();
-      unsubProds();
-      unsubTrans();
-    };
+    return () => { unsubCats(); unsubTypes(); unsubProds(); unsubTrans(); };
   }, []);
 
   useEffect(() => {
     localStorage.setItem('inv_session', JSON.stringify(currentUser));
   }, [currentUser]);
 
-  // Fungsi Tambah Atribut
+  // Handler Tambah Atribut (Kategori/Jenis)
   const handleAddCategory = async () => {
     const name = prompt("Masukkan Nama Kategori Baru:");
     if (!name || name.trim() === "") return;
     
     try {
-      const categoriesRef = ref(db, 'categories');
-      const newCategoryRef = push(categoriesRef);
-      const newId = newCategoryRef.key;
-      
-      if (!newId) throw new Error("Gagal generate ID");
-
-      await set(newCategoryRef, {
-        id: newId,
-        name: name.trim()
-      });
-      console.log("Kategori berhasil ditambah");
+      const newRef = push(ref(db, 'categories'));
+      await set(newRef, { id: newRef.key, name: name.trim() });
     } catch (err) {
-      console.error("Error adding category:", err);
-      alert("Gagal menambah kategori. Pastikan Database Rules di Firebase sudah diatur ke 'public' atau '.write: true'.");
+      alert("EROR: Gagal simpan ke Firebase. \n\nPastikan di Firebase Console -> Realtime Database -> Rules sudah diset ke: \n{ \".read\": true, \".write\": true }");
     }
   };
 
@@ -116,20 +102,10 @@ const App: React.FC = () => {
     if (!name || name.trim() === "") return;
     
     try {
-      const typesRef = ref(db, 'types');
-      const newTypeRef = push(typesRef);
-      const newId = newTypeRef.key;
-
-      if (!newId) throw new Error("Gagal generate ID");
-
-      await set(newTypeRef, {
-        id: newId,
-        name: name.trim()
-      });
-      console.log("Jenis berhasil ditambah");
+      const newRef = push(ref(db, 'types'));
+      await set(newRef, { id: newRef.key, name: name.trim() });
     } catch (err) {
-      console.error("Error adding type:", err);
-      alert("Gagal menambah jenis barang.");
+      alert("Gagal menambah jenis. Periksa koneksi atau izin database.");
     }
   };
 
@@ -143,37 +119,31 @@ const App: React.FC = () => {
     else alert('Username atau password salah!');
   };
 
-  const handleLogout = () => { if (window.confirm('Keluar dari aplikasi?')) { setCurrentUser(null); setView('login'); } };
-
   const addProduct = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     const name = formData.get('name') as string;
     const categoryId = formData.get('categoryId') as string;
     const typeId = formData.get('typeId') as string;
-    const stock = parseInt(formData.get('stock') as string) || 0;
+    const stockStr = formData.get('stock') as string;
+    const stock = parseInt(stockStr) || 0;
 
-    if (!categoryId || !typeId) return alert("Pilih kategori & jenis terlebih dahulu!");
+    if (!categoryId) return alert("EROR: Kategori belum dipilih! Tambah kategori dulu di menu 'Atribut'.");
+    if (!typeId) return alert("EROR: Jenis belum dipilih! Tambah jenis dulu di menu 'Atribut'.");
 
     try {
-      const productsRef = ref(db, 'products');
-      const newProductRef = push(productsRef);
-      const id = newProductRef.key || Math.random().toString(36).substr(2, 9);
-      
+      const newRef = push(ref(db, 'products'));
+      const id = newRef.key;
       const newProduct: Product = {
-        id,
+        id: id!,
         code: `BRG-${Date.now().toString().slice(-6)}`,
-        name, 
-        categoryId, 
-        typeId, 
-        stock,
+        name, categoryId, typeId, stock,
         updatedAt: new Date().toISOString()
       };
-
-      await set(ref(db, `products/${id}`), newProduct);
+      await set(newRef, newProduct);
       e.currentTarget.reset();
+      alert("Produk berhasil disimpan!");
     } catch (err) {
-      console.error("Error adding product:", err);
       alert("Gagal menyimpan produk.");
     }
   };
@@ -181,213 +151,178 @@ const App: React.FC = () => {
   const updateProductStock = async (productCode: string, qty: number, type: TransactionType) => {
     const product = products.find(p => p.code.toUpperCase() === productCode.toUpperCase());
     if (!product) return alert("Barang tidak ditemukan!");
-    if (type === TransactionType.OUT && (product.stock || 0) < qty) return alert("Stok tidak mencukupi!");
-
+    
     try {
       const newStock = type === TransactionType.IN ? (product.stock || 0) + qty : (product.stock || 0) - qty;
+      if (newStock < 0) return alert("Stok tidak boleh minus!");
+
       const timestamp = new Date().toISOString();
+      await update(ref(db, `products/${product.id}`), { stock: newStock, updatedAt: timestamp });
 
-      await update(ref(db, `products/${product.id}`), { 
-        stock: newStock, 
-        updatedAt: timestamp 
+      const transRef = push(ref(db, 'transactions'));
+      await set(transRef, {
+        id: transRef.key, productId: product.id, productName: product.name,
+        quantity: qty, type, timestamp, userId: currentUser?.id, userName: currentUser?.username
       });
-
-      const transactionsRef = ref(db, 'transactions');
-      const newTransRef = push(transactionsRef);
-      const transId = newTransRef.key;
-
-      await set(newTransRef, {
-        id: transId, 
-        productId: product.id, 
-        productName: product.name,
-        quantity: qty, 
-        type, 
-        timestamp, 
-        userId: currentUser?.id, 
-        userName: currentUser?.username
-      });
-
       setShowScanner({ active: false, type: null });
     } catch (err) {
-      console.error("Error updating stock:", err);
-      alert("Gagal memperbarui stok.");
+      alert("Gagal update stok.");
     }
   };
 
   if (!currentUser) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-blue-600 p-6">
-      <div className="bg-white w-full max-w-md p-8 rounded-2xl shadow-xl">
-        <div className="flex justify-center mb-4 text-4xl">📦</div>
-        <h1 className="text-2xl font-bold mb-2 text-center">Cloud Inventory</h1>
-        <p className="text-gray-400 text-sm text-center mb-6">v1.4 - Secured Connection</p>
+      <div className="bg-white w-full max-w-md p-8 rounded-3xl shadow-2xl">
+        <div className="flex justify-center mb-6 text-5xl">📦</div>
+        <h1 className="text-3xl font-black mb-1 text-center text-gray-800">Smart Stock</h1>
+        <p className="text-gray-400 text-sm text-center mb-8 uppercase tracking-widest font-bold">Cloud Inventory</p>
         <form onSubmit={handleLogin} className="space-y-4">
-          <input name="username" type="text" placeholder="Username" required className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-          <input name="password" type="password" placeholder="Password" required className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
-          <button type="submit" className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition-colors shadow-lg">Login</button>
+          <input name="username" type="text" placeholder="Username" required className="w-full px-5 py-3 border-2 rounded-2xl focus:border-blue-500 outline-none transition-all" />
+          <input name="password" type="password" placeholder="Password" required className="w-full px-5 py-3 border-2 rounded-2xl focus:border-blue-500 outline-none transition-all" />
+          <button type="submit" className="w-full bg-blue-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-blue-700 transition-all shadow-lg shadow-blue-200">MASUK</button>
         </form>
       </div>
-      {!isOnline && (
-        <div className="mt-4 text-white bg-red-500/40 backdrop-blur-md px-6 py-3 rounded-2xl text-xs border border-white/20 text-center max-w-xs animate-pulse">
-          ⚠️ Terputus dari Database. Periksa aturan keamanan (Rules) di Firebase Console.
-        </div>
-      )}
     </div>
   );
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col md:flex-row">
-      <aside className="w-full md:w-64 bg-white border-r p-6 space-y-2 no-print flex-shrink-0">
-        <div className="font-bold text-xl text-blue-600 mb-8 flex items-center gap-2">☁️ Cloud Stock</div>
-        <nav className="space-y-1">
-          <button onClick={() => setView('dashboard')} className={`w-full text-left p-3 rounded-xl transition-all ${view === 'dashboard' ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>📊 Dashboard</button>
-          <button onClick={() => setView('products')} className={`w-full text-left p-3 rounded-xl transition-all ${view === 'products' ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>📦 Data Stok</button>
-          <button onClick={() => setView('transactions')} className={`w-full text-left p-3 rounded-xl transition-all ${view === 'transactions' ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>📜 Riwayat</button>
-          {currentUser.role === UserRole.ADMIN && <button onClick={() => setView('settings')} className={`w-full text-left p-3 rounded-xl transition-all ${view === 'settings' ? 'bg-blue-50 text-blue-600 font-bold' : 'text-gray-500 hover:bg-gray-50'}`}>⚙️ Atribut</button>}
-          <div className="pt-10">
-            <button onClick={handleLogout} className="w-full text-left p-3 text-red-500 font-medium hover:bg-red-50 rounded-xl transition-all">🚪 Keluar</button>
+      <aside className="w-full md:w-64 bg-white border-r p-6 no-print flex-shrink-0">
+        <div className="font-black text-2xl text-blue-600 mb-10 flex items-center gap-2">📦 SMART INV</div>
+        <nav className="space-y-2">
+          <button onClick={() => setView('dashboard')} className={`w-full text-left px-5 py-4 rounded-2xl transition-all ${view === 'dashboard' ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-100' : 'text-gray-500 hover:bg-gray-100'}`}>📊 Dashboard</button>
+          <button onClick={() => setView('products')} className={`w-full text-left px-5 py-4 rounded-2xl transition-all ${view === 'products' ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-100' : 'text-gray-500 hover:bg-gray-100'}`}>📦 Data Stok</button>
+          <button onClick={() => setView('transactions')} className={`w-full text-left px-5 py-4 rounded-2xl transition-all ${view === 'transactions' ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-100' : 'text-gray-500 hover:bg-gray-100'}`}>📜 Riwayat</button>
+          {currentUser.role === UserRole.ADMIN && (
+            <button onClick={() => setView('settings')} className={`w-full text-left px-5 py-4 rounded-2xl transition-all ${view === 'settings' ? 'bg-blue-600 text-white font-bold shadow-lg shadow-blue-100' : 'text-gray-500 hover:bg-gray-100'}`}>⚙️ Atribut</button>
+          )}
+          <div className="pt-20 border-t mt-10">
+            <button onClick={() => { if(confirm('Keluar?')) { setCurrentUser(null); setView('login'); } }} className="w-full text-left px-5 py-4 text-red-500 font-bold hover:bg-red-50 rounded-2xl transition-all">🚪 Log Out</button>
           </div>
         </nav>
       </aside>
 
-      <main className="flex-1 p-4 md:p-8 no-print overflow-hidden">
+      <main className="flex-1 p-4 md:p-10 no-print overflow-x-hidden">
         {view === 'dashboard' && (
-           <div className="space-y-6">
-           <h2 className="text-2xl font-bold">Ringkasan Gudang</h2>
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-             <button onClick={() => setShowScanner({ active: true, type: TransactionType.IN })} className="p-8 bg-green-50 border-2 border-green-200 rounded-2xl text-green-700 font-bold text-xl flex flex-col items-center hover:bg-green-100 transition-all shadow-sm">
-               <span className="text-4xl mb-2">📥</span> Barang Masuk
-             </button>
-             <button onClick={() => setShowScanner({ active: true, type: TransactionType.OUT })} className="p-8 bg-red-50 border-2 border-red-200 rounded-2xl text-red-700 font-bold text-xl flex flex-col items-center hover:bg-red-100 transition-all shadow-sm">
-               <span className="text-4xl mb-2">📤</span> Barang Keluar
-             </button>
-           </div>
-           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-             <div className="bg-white p-4 rounded-xl border text-center shadow-sm">
-               <p className="text-gray-400 text-[10px] font-bold">STOK TOTAL</p>
-               <p className="text-2xl font-black text-blue-600">{products.reduce((acc, p) => acc + (p.stock || 0), 0)}</p>
+           <div className="space-y-8 animate-in fade-in duration-500">
+             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <h2 className="text-3xl font-black text-gray-800">Ringkasan Hari Ini</h2>
+                {!isOnline && <span className="bg-red-100 text-red-600 px-4 py-1 rounded-full text-xs font-bold animate-pulse">OFFLINE: Periksa Izin Firebase</span>}
              </div>
-             <div className="bg-white p-4 rounded-xl border text-center shadow-sm">
-               <p className="text-gray-400 text-[10px] font-bold">JUMLAH ITEM</p>
-               <p className="text-2xl font-black text-gray-800">{products.length}</p>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <button onClick={() => setShowScanner({ active: true, type: TransactionType.IN })} className="group p-10 bg-white border-2 border-green-100 rounded-[2.5rem] text-green-600 font-black text-2xl flex flex-col items-center hover:bg-green-600 hover:text-white transition-all shadow-xl shadow-green-50">
+                  <span className="text-6xl mb-4 group-hover:scale-110 transition-transform">📥</span> Barang Masuk
+                </button>
+                <button onClick={() => setShowScanner({ active: true, type: TransactionType.OUT })} className="group p-10 bg-white border-2 border-red-100 rounded-[2.5rem] text-red-600 font-black text-2xl flex flex-col items-center hover:bg-red-600 hover:text-white transition-all shadow-xl shadow-red-50">
+                  <span className="text-6xl mb-4 group-hover:scale-110 transition-transform">📤</span> Barang Keluar
+                </button>
+             </div>
+             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+               <div className="bg-white p-6 rounded-3xl border shadow-sm">
+                 <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1">Total Stok</p>
+                 <p className="text-3xl font-black text-blue-600">{products.reduce((acc, p) => acc + (p.stock || 0), 0)}</p>
+               </div>
+               <div className="bg-white p-6 rounded-3xl border shadow-sm">
+                 <p className="text-gray-400 text-[10px] font-black uppercase tracking-widest mb-1">Varian Item</p>
+                 <p className="text-3xl font-black text-gray-800">{products.length}</p>
+               </div>
              </div>
            </div>
-         </div>
         )}
 
         {view === 'settings' && (
-           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-           <div className="bg-white p-6 rounded-xl border shadow-sm">
-             <div className="flex justify-between mb-4 items-center">
-               <h3 className="font-bold text-gray-700">Kategori</h3>
-               <button onClick={handleAddCategory} className="text-blue-600 font-bold text-xs bg-blue-50 px-4 py-2 rounded-full hover:bg-blue-100 transition-colors">+ Tambah Baru</button>
+           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom duration-500">
+             <div className="bg-white p-8 rounded-[2rem] border shadow-sm">
+               <div className="flex justify-between mb-6 items-center">
+                 <h3 className="font-black text-xl text-gray-800">Kategori</h3>
+                 <button onClick={handleAddCategory} className="bg-blue-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg shadow-blue-100">+ TAMBAH</button>
+               </div>
+               <div className="space-y-2">
+                 {categories.map(c => (
+                   <div key={c.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl text-sm border border-transparent hover:border-gray-200 transition-all">
+                     <span className="font-bold text-gray-700">{c.name}</span>
+                     <button onClick={() => { if(confirm('Hapus kategori?')) remove(ref(db, `categories/${c.id}`)) }} className="text-red-200 hover:text-red-500">🗑️</button>
+                   </div>
+                 ))}
+                 {categories.length === 0 && <div className="text-center py-10 bg-blue-50/50 rounded-3xl border-2 border-dashed border-blue-100 text-blue-400 text-xs font-bold">BELUM ADA KATEGORI.<br/>SILAKAN TAMBAH BARU.</div>}
+               </div>
              </div>
-             <div className="space-y-2 max-h-[400px] overflow-y-auto">
-               {categories.map(c => (
-                 <div key={c.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl text-sm border border-transparent hover:border-gray-200 transition-all">
-                   <span className="font-medium text-gray-700">{c.name}</span>
-                   <button onClick={() => { if(confirm('Hapus kategori ini?')) remove(ref(db, `categories/${c.id}`)) }} className="text-red-300 hover:text-red-500 p-1">🗑️</button>
-                 </div>
-               ))}
-               {categories.length === 0 && <p className="text-gray-400 text-xs text-center py-8 italic">Belum ada kategori. Klik "Tambah Baru".</p>}
+             
+             <div className="bg-white p-8 rounded-[2rem] border shadow-sm">
+               <div className="flex justify-between mb-6 items-center">
+                 <h3 className="font-black text-xl text-gray-800">Jenis Barang</h3>
+                 <button onClick={handleAddType} className="bg-purple-600 text-white px-4 py-2 rounded-xl text-xs font-black shadow-lg shadow-purple-100">+ TAMBAH</button>
+               </div>
+               <div className="space-y-2">
+                 {types.map(t => (
+                   <div key={t.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl text-sm border border-transparent hover:border-gray-200 transition-all">
+                     <span className="font-bold text-gray-700">{t.name}</span>
+                     <button onClick={() => { if(confirm('Hapus jenis barang?')) remove(ref(db, `types/${t.id}`)) }} className="text-red-200 hover:text-red-500">🗑️</button>
+                   </div>
+                 ))}
+                 {types.length === 0 && <div className="text-center py-10 bg-purple-50/50 rounded-3xl border-2 border-dashed border-purple-100 text-purple-400 text-xs font-bold">BELUM ADA JENIS BARANG.<br/>SILAKAN TAMBAH BARU.</div>}
+               </div>
              </div>
            </div>
-           
-           <div className="bg-white p-6 rounded-xl border shadow-sm">
-             <div className="flex justify-between mb-4 items-center">
-               <h3 className="font-bold text-gray-700">Jenis Barang</h3>
-               <button onClick={handleAddType} className="text-purple-600 font-bold text-xs bg-purple-50 px-4 py-2 rounded-full hover:bg-purple-100 transition-colors">+ Tambah Baru</button>
-             </div>
-             <div className="space-y-2 max-h-[400px] overflow-y-auto">
-               {types.map(t => (
-                 <div key={t.id} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl text-sm border border-transparent hover:border-gray-200 transition-all">
-                   <span className="font-medium text-gray-700">{t.name}</span>
-                   <button onClick={() => { if(confirm('Hapus jenis barang ini?')) remove(ref(db, `types/${t.id}`)) }} className="text-red-300 hover:text-red-500 p-1">🗑️</button>
-                 </div>
-               ))}
-               {types.length === 0 && <p className="text-gray-400 text-xs text-center py-8 italic">Belum ada jenis barang. Klik "Tambah Baru".</p>}
-             </div>
-           </div>
-         </div>
         )}
 
         {view === 'products' && (
-          <div className="space-y-6">
+          <div className="space-y-8 animate-in fade-in duration-500">
             <div className="flex justify-between items-center">
-              <h2 className="text-2xl font-bold">Daftar Barang</h2>
-              {selectedIds.size > 0 && <button onClick={() => setIsPrintMode(true)} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-blue-200 animate-pulse">🖨️ Cetak Label ({selectedIds.size})</button>}
+              <h2 className="text-3xl font-black text-gray-800">Daftar Barang</h2>
+              {selectedIds.size > 0 && <button onClick={() => setIsPrintMode(true)} className="bg-blue-600 text-white px-6 py-3 rounded-2xl text-sm font-black shadow-xl shadow-blue-200 animate-bounce">🖨️ CETAK LABEL ({selectedIds.size})</button>}
             </div>
             
             {currentUser.role === UserRole.ADMIN && (
-              <form onSubmit={addProduct} className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-white p-5 rounded-2xl border shadow-sm">
-                <input name="name" required placeholder="Nama Produk" className="border p-2.5 rounded-xl text-sm outline-none focus:ring-2 ring-blue-500/20" />
-                <select name="categoryId" required className="border p-2.5 rounded-xl text-sm bg-white">
+              <form onSubmit={addProduct} className="grid grid-cols-1 md:grid-cols-5 gap-3 bg-white p-6 rounded-[2rem] border shadow-sm">
+                <input name="name" required placeholder="Nama Produk" className="bg-gray-50 p-3.5 rounded-2xl text-sm outline-none focus:ring-2 ring-blue-500/20 border border-transparent focus:border-blue-500" />
+                <select name="categoryId" required className="bg-gray-50 p-3.5 rounded-2xl text-sm outline-none border border-transparent focus:border-blue-500">
                     <option value="">-- Kategori --</option>
                     {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
-                <select name="typeId" required className="border p-2.5 rounded-xl text-sm bg-white">
+                <select name="typeId" required className="bg-gray-50 p-3.5 rounded-2xl text-sm outline-none border border-transparent focus:border-blue-500">
                     <option value="">-- Jenis --</option>
                     {types.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                 </select>
-                <input name="stock" type="number" defaultValue="0" className="border p-2.5 rounded-xl text-sm" />
-                <button type="submit" className="bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-md shadow-blue-100">Simpan</button>
+                <input name="stock" type="number" defaultValue="0" className="bg-gray-50 p-3.5 rounded-2xl text-sm outline-none border border-transparent focus:border-blue-500" />
+                <button type="submit" className="bg-blue-600 text-white rounded-2xl font-black text-sm hover:bg-blue-700 transition-all shadow-lg shadow-blue-50">SIMPAN</button>
               </form>
             )}
 
-            <div className="bg-white rounded-2xl border shadow-sm overflow-x-auto">
+            <div className="bg-white rounded-[2rem] border shadow-sm overflow-hidden overflow-x-auto">
               <table className="w-full text-left border-collapse">
-                <thead className="bg-gray-50 border-b">
+                <thead className="bg-gray-50/50 border-b">
                   <tr>
-                    <th className="p-4 w-10"></th>
-                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Produk</th>
-                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider">Stok</th>
-                    <th className="p-4 text-xs font-bold text-gray-500 uppercase tracking-wider text-right">Aksi</th>
+                    <th className="p-5 w-10"></th>
+                    <th className="p-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Produk</th>
+                    <th className="p-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Stok</th>
+                    <th className="p-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody>
                   {products.map(p => (
-                    <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50 transition-colors">
-                      <td className="p-4">
-                        <input type="checkbox" className="w-5 h-5 rounded-lg accent-blue-600 cursor-pointer" onChange={() => {
+                    <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50/50 transition-colors">
+                      <td className="p-5">
+                        <input type="checkbox" className="w-6 h-6 rounded-lg accent-blue-600 cursor-pointer" onChange={() => {
                           const s = new Set(selectedIds);
-                          if(s.has(p.id)) s.delete(p.id); 
-                          else { 
-                            s.add(p.id); 
-                            if(!printQuantities[p.id]) setPrintQuantities(prev => ({...prev, [p.id]:1})); 
-                          }
+                          if(s.has(p.id)) s.delete(p.id); else { s.add(p.id); if(!printQuantities[p.id]) setPrintQuantities(prev => ({...prev, [p.id]:1})); }
                           setSelectedIds(s);
                         }} checked={selectedIds.has(p.id)} />
                       </td>
-                      <td className="p-4">
+                      <td className="p-5">
                         <div className="font-bold text-gray-800">{p.name}</div>
-                        <div className="flex gap-2 mt-1">
-                          <span className="text-[9px] text-gray-400 font-mono bg-gray-100 px-1.5 py-0.5 rounded uppercase">{p.code}</span>
-                          <span className="text-[9px] text-blue-500 bg-blue-50 px-1.5 py-0.5 rounded font-medium">
-                            {categories.find(c => c.id === p.categoryId)?.name || 'Tanpa Kategori'}
+                        <div className="flex gap-2 mt-1.5">
+                          <span className="text-[8px] text-gray-400 font-black bg-gray-100 px-2 py-0.5 rounded-lg uppercase">{p.code}</span>
+                          <span className="text-[8px] text-blue-500 bg-blue-50 px-2 py-0.5 rounded-lg font-black uppercase">
+                            {categories.find(c => c.id === p.categoryId)?.name || 'N/A'}
                           </span>
                         </div>
                       </td>
-                      <td className="p-4">
-                        <span className={`inline-flex items-center justify-center min-w-[32px] px-2 py-1 rounded-lg font-black text-sm ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-700'}`}>
-                          {p.stock}
-                        </span>
-                      </td>
-                      <td className="p-4 text-right">
-                        {currentUser.role === UserRole.ADMIN && (
-                          <button onClick={() => { if(confirm('Hapus produk ini secara permanen?')) remove(ref(db, `products/${p.id}`)) }} className="text-red-200 hover:text-red-500 transition-colors p-2">
-                            🗑️
-                          </button>
-                        )}
-                      </td>
+                      <td className="p-5"><span className={`px-3 py-1.5 rounded-xl font-black text-sm ${p.stock <= 5 ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-700'}`}>{p.stock}</span></td>
+                      <td className="p-5 text-right">{currentUser.role === UserRole.ADMIN && <button onClick={() => { if(confirm('Hapus?')) remove(ref(db, `products/${p.id}`)) }} className="text-red-200 hover:text-red-500 transition-colors text-xl">🗑️</button>}</td>
                     </tr>
                   ))}
-                  {products.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="p-12 text-center">
-                        <div className="text-4xl mb-2 opacity-20">📦</div>
-                        <p className="text-gray-400 italic text-sm">Gudang masih kosong. Tambahkan produk pertama Anda!</p>
-                      </td>
-                    </tr>
-                  )}
+                  {products.length === 0 && <tr><td colSpan={4} className="p-20 text-center text-gray-400 italic font-medium">GUDANG KOSONG</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -395,28 +330,24 @@ const App: React.FC = () => {
         )}
 
         {view === 'transactions' && (
-          <div className="space-y-4">
-            <h2 className="text-2xl font-bold">Riwayat Transaksi</h2>
-            <div className="bg-white rounded-2xl border shadow-sm overflow-hidden divide-y">
+          <div className="space-y-6 animate-in slide-in-from-right duration-500">
+            <h2 className="text-3xl font-black text-gray-800">Riwayat</h2>
+            <div className="bg-white rounded-[2rem] border shadow-sm overflow-hidden divide-y">
                 {transactions.map(t => (
-                <div key={t.id} className="p-4 flex justify-between items-center hover:bg-gray-50 transition-colors">
-                    <div className="flex items-center gap-3">
-                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-[10px] ${t.type === TransactionType.IN ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
+                <div key={t.id} className="p-6 flex justify-between items-center hover:bg-gray-50">
+                    <div className="flex items-center gap-4">
+                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center font-black text-[10px] shadow-sm ${t.type === TransactionType.IN ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
                             {t.type === TransactionType.IN ? 'MASUK' : 'KELUAR'}
                         </div>
                         <div>
-                            <p className="font-bold text-gray-800 text-sm">{t.productName}</p>
-                            <p className="text-[10px] text-gray-400 font-medium">
-                              {new Date(t.timestamp).toLocaleDateString('id-ID')} {new Date(t.timestamp).toLocaleTimeString('id-ID', {hour: '2-digit', minute:'2-digit'})} • Oleh: {t.userName}
-                            </p>
+                            <p className="font-black text-gray-800">{t.productName}</p>
+                            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mt-0.5">{new Date(t.timestamp).toLocaleString('id-ID')} • {t.userName}</p>
                         </div>
                     </div>
-                    <div className={`text-lg font-black ${t.type === TransactionType.IN ? 'text-green-600' : 'text-red-600'}`}>
-                      {t.type === TransactionType.IN ? '+' : '-'}{t.quantity}
-                    </div>
+                    <div className={`text-2xl font-black ${t.type === TransactionType.IN ? 'text-green-600' : 'text-red-600'}`}>{t.type === TransactionType.IN ? '+' : '-'}{t.quantity}</div>
                 </div>
                 ))}
-                {transactions.length === 0 && <p className="p-12 text-center text-gray-400 italic text-sm">Belum ada aktivitas transaksi.</p>}
+                {transactions.length === 0 && <p className="p-20 text-center text-gray-400 italic">BELUM ADA AKTIVITAS</p>}
             </div>
           </div>
         )}
@@ -424,65 +355,59 @@ const App: React.FC = () => {
 
       {/* MODAL PRINT BARCODE */}
       {isPrintMode && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center no-print p-4">
-          <div className="bg-white w-full max-w-2xl h-[85vh] rounded-[2rem] flex flex-col overflow-hidden shadow-2xl">
-            <div className="p-8 border-b flex justify-between items-center bg-gray-50">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center no-print p-4">
+          <div className="bg-white w-full max-w-2xl h-[85vh] rounded-[3rem] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in duration-300">
+            <div className="p-10 border-b flex justify-between items-center bg-gray-50/50">
                 <div>
-                    <h3 className="font-black text-2xl text-gray-800">Cetak Label</h3>
-                    <p className="text-sm text-gray-400 font-medium">Tentukan jumlah copy untuk setiap item</p>
+                    <h3 className="font-black text-3xl text-gray-800">Cetak Label</h3>
+                    <p className="text-sm text-gray-400 font-bold mt-1">Siapkan printer label thermal</p>
                 </div>
-                <button onClick={() => setIsPrintMode(false)} className="bg-white text-gray-400 hover:text-red-500 w-10 h-10 rounded-full flex items-center justify-center border shadow-sm transition-all">×</button>
+                <button onClick={() => setIsPrintMode(false)} className="text-gray-400 hover:text-red-500 text-4xl">×</button>
             </div>
-            <div className="flex-1 overflow-y-auto p-8 space-y-4">
+            <div className="flex-1 overflow-y-auto p-10 space-y-4">
               {products.filter(p => selectedIds.has(p.id)).map(p => (
-                <div key={p.id} className="flex justify-between items-center p-5 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                <div key={p.id} className="flex justify-between items-center p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
                   <div>
                     <p className="font-black text-gray-800">{p.name}</p>
-                    <p className="text-xs text-blue-500 font-mono mt-1 tracking-widest">{p.code}</p>
+                    <p className="text-[10px] text-blue-500 font-black font-mono mt-1">{p.code}</p>
                   </div>
-                  <div className="flex items-center gap-4 bg-gray-50 p-2 rounded-xl">
-                    <button onClick={() => setPrintQuantities(prev => ({...prev, [p.id]: Math.max(1, (prev[p.id] || 1) - 1)}))} className="w-10 h-10 bg-white border rounded-lg font-bold shadow-sm hover:bg-gray-100 active:scale-95 transition-all text-xl">-</button>
-                    <input type="number" readOnly value={printQuantities[p.id] || 1} className="w-8 text-center bg-transparent font-black text-blue-600" />
-                    <button onClick={() => setPrintQuantities(prev => ({...prev, [p.id]: (prev[p.id] || 1) + 1}))} className="w-10 h-10 bg-white border rounded-lg font-bold shadow-sm hover:bg-gray-100 active:scale-95 transition-all text-xl">+</button>
+                  <div className="flex items-center gap-4 bg-white p-2 rounded-2xl shadow-sm">
+                    <button onClick={() => setPrintQuantities(prev => ({...prev, [p.id]: Math.max(1, (prev[p.id] || 1) - 1)}))} className="w-10 h-10 bg-gray-50 border rounded-xl font-black text-xl">-</button>
+                    <input type="number" readOnly value={printQuantities[p.id] || 1} className="w-8 text-center bg-transparent font-black" />
+                    <button onClick={() => setPrintQuantities(prev => ({...prev, [p.id]: (prev[p.id] || 1) + 1}))} className="w-10 h-10 bg-gray-50 border rounded-xl font-black text-xl">+</button>
                   </div>
                 </div>
               ))}
             </div>
-            <div className="p-8 border-t bg-gray-50">
-                <button onClick={() => window.print()} className="w-full bg-blue-600 text-white py-5 rounded-2xl font-black text-lg shadow-xl shadow-blue-200 hover:bg-blue-700 active:scale-[0.98] transition-all">
-                  MULAI CETAK
-                </button>
+            <div className="p-10 border-t bg-gray-50/50">
+                <button onClick={() => window.print()} className="w-full bg-blue-600 text-white py-6 rounded-3xl font-black text-xl shadow-2xl shadow-blue-200 hover:bg-blue-700 active:scale-95 transition-all">MULAI CETAK</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* AREA KHUSUS CETAK (HIDDEN DI LAYAR) */}
+      {/* PRINT AREA */}
       <div className="print-only">
         <div className="grid grid-cols-4 gap-2 p-2">
           {products.filter(p => selectedIds.has(p.id)).map(p => (
             Array.from({length: printQuantities[p.id] || 1}).map((_, i) => (
-              <div key={`${p.id}-${i}`} className="flex flex-col items-center border border-gray-200 p-2 text-center h-[120px] justify-center overflow-hidden break-inside-avoid">
+              <div key={`${p.id}-${i}`} className="flex flex-col items-center border p-2 text-center h-[120px] justify-center overflow-hidden">
                 <p className="text-[8px] font-black leading-none mb-1 uppercase truncate w-full">{p.name}</p>
                 <BarcodeRenderer value={p.code} width={1.2} height={40} />
-                <p className="text-[7px] mt-1 font-mono tracking-wider">{p.code}</p>
+                <p className="text-[7px] mt-1 font-mono">{p.code}</p>
               </div>
             ))
           ))}
         </div>
       </div>
 
-      {/* SCANNER CAMERA */}
       {showScanner.active && (
         <Scanner 
           onScan={(code) => {
             const product = products.find(p => p.code.toUpperCase() === code.toUpperCase());
-            if (!product) return alert(`Barang dengan kode "${code}" tidak ditemukan di database!`);
-            
-            const q = prompt(`PRODUK: ${product.name}\nStok Saat Ini: ${product.stock}\n\nMasukkan Jumlah ${showScanner.type === TransactionType.IN ? 'Masuk (+)' : 'Keluar (-)'}:`, "1");
-            if(q && !isNaN(parseInt(q)) && parseInt(q) > 0) {
-                updateProductStock(code, parseInt(q), showScanner.type!);
-            }
+            if (!product) return alert(`KODE TIDAK DIKENAL: ${code}`);
+            const q = prompt(`BARANG: ${product.name}\nStok: ${product.stock}\n\nJumlah ${showScanner.type === TransactionType.IN ? 'Masuk (+)' : 'Keluar (-)'}:`, "1");
+            if(q && !isNaN(parseInt(q)) && parseInt(q) > 0) updateProductStock(code, parseInt(q), showScanner.type!);
           }}
           onClose={() => setShowScanner({ active: false, type: null })} 
         />
