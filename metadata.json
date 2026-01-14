@@ -1,0 +1,7 @@
+{
+  "name": "Smart Inventory Pro",
+  "description": "A lightweight, mobile-friendly inventory management system with automatic barcode generation and camera-based scanning.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
